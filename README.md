@@ -2,6 +2,10 @@
 
 - with streamlit
 
+```cmd
+streamlit run main.py
+```
+
 ### Installation
 
 ```cmd

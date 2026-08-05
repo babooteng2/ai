@@ -7,6 +7,7 @@ import os
 dotenv.load_dotenv()
 from openai import OpenAI
 import asyncio
+import base64
 import streamlit as st
 from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool
 
@@ -44,16 +45,28 @@ async def paint_history():
         if "role" in message:
             with st.chat_message(message["role"]):
                 if message["role"] == "user":
-                    st.write(message["content"])
+                    content = message["content"]
+                    if isinstance(content, str):
+                        st.write(content)
+                    elif isinstance(content, list):
+                        for part in content:
+                            if part.get("type") == "text":
+                                st.write(part.get("text"))
+                            elif isinstance(content, list):
+                                for part in content:
+                                    if "image_url" in part:
+                                        st.image(part["image_url"])
                 else:
                     if message["type"] == "message":
-                        st.write(message["content"][0]["text"])
-        if "type" in message and message["type"] == "web_search_call":
-            with st.chat_message("ai"):
-                st.write("📰 Web Search completed.")
-        if "type" in message and message["type"] == "file_search_call":
-            with st.chat_message("ai"):
-                st.write("🗂️ File Search completed.")
+                        st.write(message["content"][0]["text"].replace("$", "\\$"))
+
+        if "type" in message:
+            if message["type"] == "web_search_call":
+                with st.chat_message("ai"):
+                    st.write("📰 Web Search completed.")
+            if message["type"] == "file_search_call":
+                with st.chat_message("ai"):
+                    st.write("🗂️ File Search completed.")
 
 
 asyncio.run(paint_history())
@@ -82,6 +95,7 @@ def update_status(status_container, event):
             "⏳ File Searh in progress...",
             "running",
         ),
+        "response.completed": (" ", "complete"),
     }
 
     if event in status_messages:
@@ -108,7 +122,9 @@ async def run_agent(message):
 
 
 prompt = st.chat_input(
-    "Write a message for your assistant", accept_file=True, file_type=["txt"]
+    "Write a message for your assistant",
+    accept_file=True,
+    file_type=["txt", "jpg", "jpeg", "png"],
 )
 
 if prompt:
@@ -125,6 +141,31 @@ if prompt:
                         vector_store_id=vector_store_id, file_id=uploaded_file.id
                     )
                     status.update(label="✅ File uploaded", state="complete")
+        elif file.type.startswith("image/"):
+            with st.status("⏳ uploading image...") as status:
+                file_bytes = file.getvalue()
+                base64_data = base64.b64encode(file_bytes).decode("utf-8")
+                data_uri = f"data:{file.type};base64,{base64_data}"
+                asyncio.run(
+                    session.add_items(
+                        [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_image",
+                                        "detail": "auto",
+                                        "image_url": data_uri,
+                                    }
+                                ],
+                            }
+                        ]
+                    )
+                )
+                status.update(label="✅ Image uploaded", state="complete")
+            with st.chat_message("human"):
+                st.image(data_uri)
+
     if prompt.text:
         with st.chat_message("human"):
             st.write(prompt.text)
