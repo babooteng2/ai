@@ -1,5 +1,3 @@
-# qustion with file upload : Find out how many Apples shares I have and how up or down my portfolio is based on the current market price. thx
-
 import dotenv
 
 import os
@@ -9,7 +7,14 @@ from openai import OpenAI
 import asyncio
 import base64
 import streamlit as st
-from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool
+from agents import (
+    Agent,
+    Runner,
+    SQLiteSession,
+    WebSearchTool,
+    FileSearchTool,
+    ImageGenerationTool,
+)
 
 client = OpenAI()
 vector_store_id = os.getenv("OPENAI_VECTOR_STORE_ID")
@@ -27,6 +32,15 @@ if "agent" not in st.session_state:
         tools=[
             WebSearchTool(),
             FileSearchTool(vector_store_ids=[vector_store_id], max_num_results=3),
+            ImageGenerationTool(
+                tool_config={
+                    "type": "image_generation",
+                    "quality": "low",
+                    "output_format": "jpeg",
+                    "moderation": "low",
+                    "partial_images": 1,
+                }
+            ),
         ],
     )
 agent = st.session_state["agent"]
@@ -43,8 +57,9 @@ async def paint_history():
 
     for message in messages:
         if "role" in message:
-            with st.chat_message(message["role"]):
-                if message["role"] == "user":
+            message_role = message["role"]
+            if message_role == "user":
+                with st.chat_message(message_role):
                     content = message["content"]
                     if isinstance(content, str):
                         st.write(content)
@@ -56,17 +71,27 @@ async def paint_history():
                                 for part in content:
                                     if "image_url" in part:
                                         st.image(part["image_url"])
-                else:
-                    if message["type"] == "message":
-                        st.write(message["content"][0]["text"].replace("$", "\\$"))
+            else:
+                if message["type"] == "message":
+                    if message["content"][0]["text"] == "":
+                        pass
+                    else:
+                        with st.chat_message(message_role):
+                            st.write(message["content"][0]["text"].replace("$", "\\$"))
 
         if "type" in message:
-            if message["type"] == "web_search_call":
+            message_type = message["type"]
+            if message_type == "web_search_call":
                 with st.chat_message("ai"):
                     st.write("📰 Web Search completed.")
-            if message["type"] == "file_search_call":
+            if message_type == "file_search_call":
                 with st.chat_message("ai"):
                     st.write("🗂️ File Search completed.")
+            if message_type == "image_generation_call":
+                image = base64.b64decode(message["result"])
+                with st.chat_message("ai"):
+                    st.write("🖼️ Image generation completed.")
+                    st.image(image)
 
 
 asyncio.run(paint_history())
@@ -95,6 +120,14 @@ def update_status(status_container, event):
             "⏳ File Searh in progress...",
             "running",
         ),
+        'response.image_generation_call.generating': (
+            "🖌️ Drawing image...",
+            "running",
+        ),
+        'response.image_generation_call.in_progress': (
+            "🎨 Generating image...",
+            "running",
+        ),
         "response.completed": (" ", "complete"),
     }
 
@@ -107,6 +140,7 @@ async def run_agent(message):
     with st.chat_message("ai"):
         status_container = st.status("⏳", expanded=False)
         text_placeholder = st.empty()
+        image_placeholder = st.empty()
         response = ""
 
         stream = Runner.run_streamed(agent, message, session=session)
@@ -119,6 +153,14 @@ async def run_agent(message):
                 if event.data.type == "response.output_text.delta":
                     response += event.data.delta
                     text_placeholder.write(response)
+
+                elif event.data.type == "response.image_generation_call.partial_image":
+                    image = base64.b64decode(event.data.partial_image_b64)
+                    image_placeholder.image(image)
+
+                elif event.data.type == "response.completed":
+                    image_placeholder.empty()
+                    text_placeholder.empty()
 
 
 prompt = st.chat_input(
@@ -177,3 +219,10 @@ with st.sidebar:
     if reset:
         asyncio.run(session.clear_session())
     st.write(asyncio.run(session.get_items()))
+
+# question with file upload : Find out how many Apples shares I have and how up or down my portfolio is based on the current market price. thx
+
+# 1 question with image creation : Make image of a Cartoon tomato holding a potato.
+# 2 : Now make it into Pixar style.
+# 3 : Now in the style of medival painting.
+# 4 : Make an infographic of my portfolio, all the stocks i own, cash, assets, etc. in pixar style.
