@@ -13,6 +13,7 @@ from agents import (
     FileSearchTool,
     ImageGenerationTool,
     CodeInterpreterTool,
+    HostedMCPTool,
 )
 from FilteredSQLiteSession import FilteredSQLiteSession
 
@@ -45,6 +46,15 @@ if "agent" not in st.session_state:
             ),
             CodeInterpreterTool(
                 tool_config={"type": "code_interpreter", "container": {"type": "auto"}}
+            ),
+            HostedMCPTool(
+                tool_config={
+                    "server_url": "https://mcp.context7.com/mcp",
+                    "type": "mcp",
+                    "server_label": "Context7",
+                    "server_description": "Use this to get the docs from software projects.",
+                    "require_approval": "always",
+                }
             ),
         ],
     )
@@ -101,6 +111,28 @@ async def paint_history():
                 with st.chat_message("ai"):
                     st.write("🤖 Code interpreter completed.")
                     st.code(message["code"])
+            elif message_type == "mcp_list_tools":
+                with st.chat_message("ai"):
+                    tools = message["tools"]
+                    st.write(f"Listed {message["server_label"]}'s tools")
+                    if isinstance(tools, str):
+                        st.write(tools)
+                    if isinstance(tools, list):
+                        for index, (tool) in enumerate(tools):
+                            if "name" in tool:
+                                st.write(f"[ {index + 1} ] {tool["name"]}")
+                            if "description" in tool:
+                                st.write(f"- Description : {tool["description"]}")
+                            if "input_schema" in tool:
+                                st.json(tool["input_schema"])
+                            st.write(
+                                f"======================================================"
+                            )
+            elif message_type == "mcp_approval_request":
+                with st.chat_message("ai"):
+                    st.write(f"Server Label : {message["server_label"]}")
+                    st.write(f"- Name : {message["name"]}")
+                    st.json(message["arguments"])
 
 
 asyncio.run(paint_history())
@@ -148,6 +180,20 @@ def update_status(status_container, event):
         ),
         'response.code_interpreter_call.interpreting': (
             "🤖 running code...",
+            "running",
+        ),
+        'response.mcp_call_arguments.delta': ("🛠️ MCP progress...", "running"),
+        'response.mcp_call_arguments.done': ("🛠️ MCP arguments done...", "complete"),
+        'response.mcp_call.completed': ("🛠️ MCP called...", "complete"),
+        'response.mcp_call.failed': ("🛠️ MCP failed...", "fail"),
+        'response.mcp_call.in_progress': ("🛠️ MCP calling...", "running"),
+        'response.mcp_list_tools.completed': (
+            "🛠️ Listed MCP tools...",
+            "complete",
+        ),
+        'response.mcp_list_tools.failed': ("🛠️ MCP list tools failed...", "fail"),
+        'response.mcp_list_tools.in_progress': (
+            "🛠️ Listing MCP tools...",
             "running",
         ),
         "response.completed": (" ", "complete"),
@@ -265,3 +311,7 @@ with st.sidebar:
 # 1 : Calculate what happens if everything in my portfolio of stock goes up by 20% (run code to make the calculation)
 # 2: Run some code to calculate what happens if everything in my portfolio goes up by 10%
 # 3: Now calculate what happens if it goes down 40%
+
+# MCP tools
+# 1: what mcp tools do you have?
+# 2: Use Context7 with HostedMCPTool to tell me about making SRT files with OpenAI
