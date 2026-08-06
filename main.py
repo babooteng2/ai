@@ -1,5 +1,4 @@
 import dotenv
-
 import os
 
 dotenv.load_dotenv()
@@ -10,11 +9,12 @@ import streamlit as st
 from agents import (
     Agent,
     Runner,
-    SQLiteSession,
     WebSearchTool,
     FileSearchTool,
     ImageGenerationTool,
+    CodeInterpreterTool,
 )
+from FilteredSQLiteSession import FilteredSQLiteSession
 
 client = OpenAI()
 vector_store_id = os.getenv("OPENAI_VECTOR_STORE_ID")
@@ -28,6 +28,7 @@ if "agent" not in st.session_state:
         You have access to the followign tools:
             - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
             - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
+            - Code Interpreter Tool: Use this tool when you need to write and code to answer the user's question.
         """,
         tools=[
             WebSearchTool(),
@@ -39,14 +40,18 @@ if "agent" not in st.session_state:
                     "output_format": "jpeg",
                     "moderation": "low",
                     "partial_images": 1,
+                    "size": "1024x1024",
                 }
+            ),
+            CodeInterpreterTool(
+                tool_config={"type": "code_interpreter", "container": {"type": "auto"}}
             ),
         ],
     )
 agent = st.session_state["agent"]
 
 if "session" not in st.session_state:
-    st.session_state["session"] = SQLiteSession(
+    st.session_state["session"] = FilteredSQLiteSession(
         "chat-history", "chat-gpt-clone-memory.db"
     )
 session = st.session_state["session"]
@@ -84,14 +89,18 @@ async def paint_history():
             if message_type == "web_search_call":
                 with st.chat_message("ai"):
                     st.write("📰 Web Search completed.")
-            if message_type == "file_search_call":
+            elif message_type == "file_search_call":
                 with st.chat_message("ai"):
                     st.write("🗂️ File Search completed.")
-            if message_type == "image_generation_call":
+            elif message_type == "image_generation_call":
                 image = base64.b64decode(message["result"])
                 with st.chat_message("ai"):
                     st.write("🖼️ Image generation completed.")
                     st.image(image)
+            elif message_type == "code_interpreter_call":
+                with st.chat_message("ai"):
+                    st.write("🤖 Code interpreter completed.")
+                    st.code(message["code"])
 
 
 asyncio.run(paint_history())
@@ -105,7 +114,7 @@ def update_status(status_container, event):
             "running",
         ),
         'response.web_search_call.searching': (
-            "⏳ Web Searh in progress...",
+            "⏳ Web Search in progress...",
             "running",
         ),
         'response.file_search_call.completed': (
@@ -117,7 +126,7 @@ def update_status(status_container, event):
             "running",
         ),
         'response.file_search_call.searching': (
-            "⏳ File Searh in progress...",
+            "⏳ File Search in progress...",
             "running",
         ),
         'response.image_generation_call.generating': (
@@ -126,6 +135,19 @@ def update_status(status_container, event):
         ),
         'response.image_generation_call.in_progress': (
             "🎨 Generating image...",
+            "running",
+        ),
+        'response.code_interpreter_call_code.done': ("🤖 ran code done.", "complete"),
+        'response.code_interpreter_call.completed': (
+            "🤖 ran code complete.",
+            "complete",
+        ),
+        'response.code_interpreter_call.in_progress': (
+            "🤖 starting code.",
+            "running",
+        ),
+        'response.code_interpreter_call.interpreting': (
+            "🤖 running code...",
             "running",
         ),
         "response.completed": (" ", "complete"),
@@ -139,9 +161,15 @@ def update_status(status_container, event):
 async def run_agent(message):
     with st.chat_message("ai"):
         status_container = st.status("⏳", expanded=False)
-        text_placeholder = st.empty()
+        code_placeholder = st.empty()
         image_placeholder = st.empty()
+        text_placeholder = st.empty()
         response = ""
+        code_response = ""
+
+        st.session_state["code_placeholder"] = code_placeholder
+        st.session_state["image_placeholder"] = image_placeholder
+        st.session_state["text_placeholder"] = text_placeholder
 
         stream = Runner.run_streamed(agent, message, session=session)
 
@@ -154,13 +182,13 @@ async def run_agent(message):
                     response += event.data.delta
                     text_placeholder.write(response)
 
+                if event.data.type == "response.code_interpreter_call_code.delta":
+                    code_response += event.data.delta
+                    code_placeholder.code(code_response)
+
                 elif event.data.type == "response.image_generation_call.partial_image":
                     image = base64.b64decode(event.data.partial_image_b64)
                     image_placeholder.image(image)
-
-                elif event.data.type == "response.completed":
-                    image_placeholder.empty()
-                    text_placeholder.empty()
 
 
 prompt = st.chat_input(
@@ -170,6 +198,12 @@ prompt = st.chat_input(
 )
 
 if prompt:
+    if "code_placeholder" in st.session_state:
+        st.session_state["code_placeholder"].empty()
+    if "image_placeholder" in st.session_state:
+        st.session_state["image_placeholder"].empty()
+    if "text_placeholder" in st.session_state:
+        st.session_state["text_placeholder"].empty()
 
     for file in prompt.files:
         if file.type.startswith("text/"):
@@ -226,3 +260,8 @@ with st.sidebar:
 # 2 : Now make it into Pixar style.
 # 3 : Now in the style of medival painting.
 # 4 : Make an infographic of my portfolio, all the stocks i own, cash, assets, etc. in pixar style.
+
+# code interpreter tool
+# 1 : Calculate what happens if everything in my portfolio of stock goes up by 20% (run code to make the calculation)
+# 2: Run some code to calculate what happens if everything in my portfolio goes up by 10%
+# 3: Now calculate what happens if it goes down 40%

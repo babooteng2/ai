@@ -11,3 +11,8 @@ streamlit run main.py
 ```cmd
 uv sync
 ```
+
+### openai version
+
+- openai==2.48.0
+- openai-agents==0.18.3
