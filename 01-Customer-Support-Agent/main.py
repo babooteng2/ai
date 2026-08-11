@@ -1,8 +1,24 @@
+import dotenv
+
+dotenv.load_dotenv()
+from openai import OpenAI
 import asyncio
 import streamlit as st
-from agents import Runner, SQLiteSession
+from agents import Runner, SQLiteSession, function_tool, RunContextWrapper
+from models import USerAccountContext
 
-# client = OpenAI()
+
+@function_tool
+def get_user_tier(wrapper: RunContextWrapper[USerAccountContext]):
+
+    return (
+        f"Ther user{wrapper.context.customer_id} has a {wrapper.context.tier} account."
+    )
+
+
+client = OpenAI()
+
+user_account_ctx = USerAccountContext(customer_id=1, name="nico", tier="basic")
 
 if "session" not in st.session_state:
     st.session_state["session"] = SQLiteSession(
@@ -21,7 +37,7 @@ async def paint_history():
                     st.write(message["content"])
                 else:
                     if message["type"] == "message":
-                        st.write(message["content"][0]["text"].replace("$", "\$"))
+                        st.write(message["content"][0]["text"].replace("$", "\\$"))
 
 
 asyncio.run(paint_history())
@@ -39,6 +55,8 @@ async def run_agent(message):
             # agent,
             message,
             session=session,
+            context=user_account_ctx,
+            input="",
         )
 
         async for event in stream.stream_events():
@@ -46,7 +64,7 @@ async def run_agent(message):
 
                 if event.data.type == "response.output_text.delta":
                     response += event.data.delta
-                    text_placeholder.write(response.replace("$", "\$"))
+                    text_placeholder.write(response.replace("$", "\\$"))
 
 
 message = st.chat_input(
