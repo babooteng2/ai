@@ -56,3 +56,4 @@ uv sync
 1. what tools do you have?
 2. Tell me the stock price of AAPL
 3. Tell me the PE ratio of Cloudflare NET
+4. If i go to sleep at 8pm in BC what is that time in Korea?

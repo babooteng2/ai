@@ -176,23 +176,34 @@ async def run_agent(message):
         client_session_timeout_seconds=60,
     )
 
-    async with yfinance_server:
+    timezone_server = MCPServerStdio(
+        params={
+            "command": "uvx",
+            "args": [
+                "--with",
+                "mcp<2.0.0",
+                "mcp-server-time",
+                "--local-timezone=America/Toronto",
+            ],
+        }
+    )
+
+    async with yfinance_server, timezone_server:
 
         agent = Agent(
-            mcp_servers=[
-                yfinance_server,
-            ],
+            mcp_servers=[yfinance_server, timezone_server],
             name="ChatGPT-Clone",
             instructions="""
             You are a helpful assistant.
 
-            You have access to the followign tools:
+            You have access to the following tools:
                 - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
                 - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
                 - Code Interpreter Tool: Use this tool when you need to write and code to answer the user's question.
                 - For any stock price, ticker, financial metric, or market data query, you MUST use the yahoo-finance MCP tool first.
                 Only fall back to web_search if yahoo-finance returns an error or no data.
                 Do not use web_search for ticker-based queries under any circumstances.
+                - For checking national Time, to use mcp-server-time first.
             """,
             tools=[
                 WebSearchTool(),
