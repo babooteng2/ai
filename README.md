@@ -2,8 +2,9 @@
 
 ## What to Learn
 
-1. Guardrails
+1. Context Managament (pydantic model)
 2. Dynamic Triage
-3. Handoffs
-4. Hooks
-5. Voice Agent
+3. Guardrails
+4. Handoffs
+5. Hooks
+6. Voice Agent
