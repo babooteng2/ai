@@ -16,49 +16,10 @@ from agents import (
     HostedMCPTool,
 )
 from FilteredSQLiteSession import FilteredSQLiteSession
+from agents.mcp.server import MCPServerStdio
 
 client = OpenAI()
 vector_store_id = os.getenv("OPENAI_VECTOR_STORE_ID")
-
-if "agent" not in st.session_state:
-    st.session_state["agent"] = Agent(
-        name="ChatGPT-Clone",
-        instructions="""
-        You are a helpful assistant.
-
-        You have access to the followign tools:
-            - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
-            - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
-            - Code Interpreter Tool: Use this tool when you need to write and code to answer the user's question.
-        """,
-        tools=[
-            WebSearchTool(),
-            FileSearchTool(vector_store_ids=[vector_store_id], max_num_results=3),
-            ImageGenerationTool(
-                tool_config={
-                    "type": "image_generation",
-                    "quality": "low",
-                    "output_format": "jpeg",
-                    "moderation": "low",
-                    "partial_images": 1,
-                    "size": "1024x1024",
-                }
-            ),
-            CodeInterpreterTool(
-                tool_config={"type": "code_interpreter", "container": {"type": "auto"}}
-            ),
-            HostedMCPTool(
-                tool_config={
-                    "server_url": "https://mcp.context7.com/mcp",
-                    "type": "mcp",
-                    "server_label": "Context7",
-                    "server_description": "Use this to get the docs from software projects.",
-                    "require_approval": "always",
-                }
-            ),
-        ],
-    )
-agent = st.session_state["agent"]
 
 if "session" not in st.session_state:
     st.session_state["session"] = FilteredSQLiteSession(
@@ -205,36 +166,98 @@ def update_status(status_container, event):
 
 
 async def run_agent(message):
-    with st.chat_message("ai"):
-        status_container = st.status("⏳", expanded=False)
-        code_placeholder = st.empty()
-        image_placeholder = st.empty()
-        text_placeholder = st.empty()
-        response = ""
-        code_response = ""
+    yfinance_server = MCPServerStdio(
+        params={
+            "command": "uvx",
+            # "args": ["mcp-yahoo-finance"],
+            "args": ["--with", "mcp<2.0.0", "mcp-yahoo-finance"],
+        },
+        cache_tools_list=True,
+        client_session_timeout_seconds=60,
+    )
 
-        st.session_state["code_placeholder"] = code_placeholder
-        st.session_state["image_placeholder"] = image_placeholder
-        st.session_state["text_placeholder"] = text_placeholder
+    async with yfinance_server:
 
-        stream = Runner.run_streamed(agent, message, session=session)
+        agent = Agent(
+            mcp_servers=[
+                yfinance_server,
+            ],
+            name="ChatGPT-Clone",
+            instructions="""
+            You are a helpful assistant.
 
-        async for event in stream.stream_events():
-            if event.type == "raw_response_event":
+            You have access to the followign tools:
+                - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
+                - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
+                - Code Interpreter Tool: Use this tool when you need to write and code to answer the user's question.
+                - For any stock price, ticker, financial metric, or market data query, you MUST use the yahoo-finance MCP tool first.
+                Only fall back to web_search if yahoo-finance returns an error or no data.
+                Do not use web_search for ticker-based queries under any circumstances.
+            """,
+            tools=[
+                WebSearchTool(),
+                FileSearchTool(vector_store_ids=[vector_store_id], max_num_results=3),
+                ImageGenerationTool(
+                    tool_config={
+                        "type": "image_generation",
+                        "quality": "low",
+                        "output_format": "jpeg",
+                        "moderation": "low",
+                        "partial_images": 1,
+                        "size": "1024x1024",
+                    }
+                ),
+                CodeInterpreterTool(
+                    tool_config={
+                        "type": "code_interpreter",
+                        "container": {"type": "auto"},
+                    }
+                ),
+                HostedMCPTool(
+                    tool_config={
+                        "server_url": "https://mcp.context7.com/mcp",
+                        "type": "mcp",
+                        "server_label": "Context7",
+                        "server_description": "Use this to get the docs from software projects.",
+                        "require_approval": "never",
+                    }
+                ),
+            ],
+        )
 
-                update_status(status_container, event.data.type)
+        with st.chat_message("ai"):
+            status_container = st.status("⏳", expanded=False)
+            code_placeholder = st.empty()
+            image_placeholder = st.empty()
+            text_placeholder = st.empty()
+            response = ""
+            code_response = ""
 
-                if event.data.type == "response.output_text.delta":
-                    response += event.data.delta
-                    text_placeholder.write(response)
+            st.session_state["code_placeholder"] = code_placeholder
+            st.session_state["image_placeholder"] = image_placeholder
+            st.session_state["text_placeholder"] = text_placeholder
 
-                if event.data.type == "response.code_interpreter_call_code.delta":
-                    code_response += event.data.delta
-                    code_placeholder.code(code_response)
+            stream = Runner.run_streamed(agent, message, session=session)
 
-                elif event.data.type == "response.image_generation_call.partial_image":
-                    image = base64.b64decode(event.data.partial_image_b64)
-                    image_placeholder.image(image)
+            async for event in stream.stream_events():
+                if event.type == "raw_response_event":
+
+                    update_status(status_container, event.data.type)
+
+                    if event.data.type == "response.output_text.delta":
+                        response += event.data.delta
+                        text_placeholder.write(response)
+
+                    if event.data.type == "response.code_interpreter_call_code.delta":
+                        code_response += event.data.delta
+                        code_placeholder.code(code_response)
+
+                    elif (
+                        event.data.type
+                        == "response.image_generation_call.partial_image"
+                    ):
+                        image = base64.b64decode(event.data.partial_image_b64)
+                        image_placeholder.image(image)
 
 
 prompt = st.chat_input(
@@ -293,25 +316,8 @@ if prompt:
             st.write(prompt.text)
         asyncio.run(run_agent(prompt.text))
 
-
 with st.sidebar:
     reset = st.button("Reset memory")
     if reset:
         asyncio.run(session.clear_session())
     st.write(asyncio.run(session.get_items()))
-
-# question with file upload : Find out how many Apples shares I have and how up or down my portfolio is based on the current market price. thx
-
-# 1 question with image creation : Make image of a Cartoon tomato holding a potato.
-# 2 : Now make it into Pixar style.
-# 3 : Now in the style of medival painting.
-# 4 : Make an infographic of my portfolio, all the stocks i own, cash, assets, etc. in pixar style.
-
-# code interpreter tool
-# 1 : Calculate what happens if everything in my portfolio of stock goes up by 20% (run code to make the calculation)
-# 2: Run some code to calculate what happens if everything in my portfolio goes up by 10%
-# 3: Now calculate what happens if it goes down 40%
-
-# MCP tools
-# 1: what mcp tools do you have?
-# 2: Use Context7 with HostedMCPTool to tell me about making SRT files with OpenAI
