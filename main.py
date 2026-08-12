@@ -18,7 +18,9 @@ def get_user_tier(wrapper: RunContextWrapper[USerAccountContext]):
 
 client = OpenAI()
 
-user_account_ctx = USerAccountContext(customer_id=1, name="nico", tier="basic")
+user_account_ctx = USerAccountContext(
+    customer_id=1, name="nico", tier="basic", email="b@gmail.com"
+)
 
 if "session" not in st.session_state:
     st.session_state["session"] = SQLiteSession(
